@@ -1,16 +1,15 @@
 package docile
 
 import (
-	"fmt"
 	"go/ast"
 	"go/doc"
 	"go/parser"
 	"go/token"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"text/template"
 )
 
 var packages = map[string]map[string]string{}
@@ -36,30 +35,40 @@ func Add(pack, key, doc string) {
 var funcReg = regexp.MustCompile("^func ")
 var typeReg = regexp.MustCompile("^TYPES")
 
-func Generate(pack string, dst string) (err error) {
-	dst, err = filepath.Abs(dst)
-	if err != nil {
-		return
-	}
-	dstFileName := filepath.Join(os.TempDir(), fmt.Sprintf("docile-generated-%v.go", rand.Int63()))
-	dstFile, err := os.Create(dstFileName)
-	if err != nil {
-		return
-	}
-	defer func() {
-		if err == nil {
-			if err = dstFile.Close(); err == nil {
-				err = os.Rename(dstFileName, dst)
-			}
-		}
-	}()
-	if _, err = fmt.Fprintf(dstFile, `package %v
+type DocObj struct {
+	Pack    string
+	Name    string
+	Comment string
+}
+type TmplObj struct {
+	Package string
+	Docs    []DocObj
+}
+
+var tmpl = template.Must(template.New("template").Parse(`
+package {{.Package}}
 import "github.com/zond/docile"
 func init() {
-`, filepath.Base(filepath.Dir(dst))); err != nil {
-		return
+{{range .Docs}}
+  docile.Add("{{.Pack}}", "{{.Name}}", "{{.Comment}}")
+{{end}}
+}
+`))
+
+func Generate(pack string, dst string) (err error) {
+
+	if err = os.Remove(dst); err != nil {
+		if os.IsNotExist(err) {
+			err = nil
+		} else {
+			return
+		}
 	}
 
+	ctx := TmplObj{
+		filepath.Base(filepath.Dir(dst)),
+		[]DocObj{},
+	}
 	var pkgs map[string]*ast.Package
 	for _, godir := range strings.Split(os.Getenv("GOPATH"), string(os.PathListSeparator)) {
 		if pkgs, err = parser.ParseDir(&token.FileSet{}, filepath.Join(godir, "src", pack), nil, parser.ParseComments); err == nil {
@@ -67,9 +76,7 @@ func init() {
 				docPack := doc.New(pkg, filepath.Join(godir, "src", pack), 0)
 				for _, f := range docPack.Funcs {
 					if strings.TrimSpace(f.Doc) != "" {
-						if _, err = fmt.Fprintf(dstFile, "  docile.Add(%#v, %#v, %#v)\n", pack, f.Name, strings.TrimSpace(f.Doc)); err != nil {
-							return
-						}
+						ctx.Docs = append(ctx.Docs, DocObj{pack, f.Name, strings.TrimSpace(f.Doc)})
 					}
 				}
 			}
@@ -78,9 +85,25 @@ func init() {
 			err = nil
 		}
 	}
-	if _, err = fmt.Fprintln(dstFile, "}"); err != nil {
+
+	if len(ctx.Docs) < 1 {
 		return
 	}
-	return
 
+	dst, err = filepath.Abs(dst)
+	if err != nil {
+		return
+	}
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return
+	}
+	defer dstFile.Close()
+
+	err = tmpl.Execute(dstFile, ctx)
+	if err != nil {
+		return
+	}
+
+	return
 }
