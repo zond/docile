@@ -1,6 +1,7 @@
 package docile
 
 import (
+	"fmt"
 	"go/ast"
 	"go/doc"
 	"go/parser"
@@ -50,7 +51,7 @@ package {{.Package}}
 import "github.com/zond/docile"
 func init() {
 {{range .Docs}}
-  docile.Add("{{.Pack}}", "{{.Name}}", "{{.Comment}}")
+  docile.Add({{.Pack}}, {{.Name}}, {{.Comment}})
 {{end}}
 }
 `))
@@ -76,7 +77,7 @@ func Generate(pack string, dst string) (err error) {
 				docPack := doc.New(pkg, filepath.Join(godir, "src", pack), 0)
 				for _, f := range docPack.Funcs {
 					if strings.TrimSpace(f.Doc) != "" {
-						ctx.Docs = append(ctx.Docs, DocObj{pack, f.Name, strings.TrimSpace(f.Doc)})
+						ctx.Docs = append(ctx.Docs, DocObj{fmt.Sprintf("%#v", pack), fmt.Sprintf("%#v", f.Name), fmt.Sprintf("%#v", strings.TrimSpace(f.Doc))})
 					}
 				}
 			}
